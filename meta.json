@@ -7,7 +7,7 @@
   "owner": "you",
   "version": "1.0.0.0",
   "targetAbi": "10.11.0.0",
-  "framework": "net8.0",
+  "framework": "net9.0",
   "status": "Active",
   "autoUpdate": false,
   "imageUrl": "",
