@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>SubtitleCat</title>
+</head>
+<body>
+<div id="SubtitleCatConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="SubtitleCatConfigForm">
+                <div class="verticalSection">
+                    <h2>SubtitleCat</h2>
+                    <p>
+                        Searches and downloads subtitles from
+                        <a is="emby-linkbutton" href="https://www.subtitlecat.com" target="_blank" rel="noopener">subtitlecat.com</a>.
+                        This provider needs no account or API key.
+                    </p>
+                </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="MaxCandidates">Max candidate titles per search</label>
+                    <input is="emby-input" type="number" id="MaxCandidates" min="1" max="20" label="Max candidate titles per search" />
+                    <div class="fieldDescription">
+                        How many search-result titles to open and inspect per search. Lower is faster and gentler on subtitlecat.com; raise it if you often miss matches for ambiguously-named titles.
+                    </div>
+                </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="RequestTimeoutSeconds">Request timeout (seconds)</label>
+                    <input is="emby-input" type="number" id="RequestTimeoutSeconds" min="5" max="60" label="Request timeout (seconds)" />
+                </div>
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                        <span>Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script type="text/javascript">
+    var SubtitleCatConfig = {
+        pluginUniqueId: 'f9a1f5c2-6b1e-4b7a-9b7a-1c9a2f7e2b31'
+    };
+
+    (function () {
+        function loadConfig(view) {
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(SubtitleCatConfig.pluginUniqueId).then(function (config) {
+                view.querySelector('#MaxCandidates').value = config.MaxCandidates;
+                view.querySelector('#RequestTimeoutSeconds').value = config.RequestTimeoutSeconds;
+                Dashboard.hideLoadingMsg();
+            });
+        }
+
+        document.querySelector('#SubtitleCatConfigPage')
+            .addEventListener('pageshow', function () {
+                loadConfig(this);
+            });
+
+        document.querySelector('#SubtitleCatConfigForm')
+            .addEventListener('submit', function (e) {
+                var view = this.closest('#SubtitleCatConfigPage');
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(SubtitleCatConfig.pluginUniqueId).then(function (config) {
+                    config.MaxCandidates = parseInt(view.querySelector('#MaxCandidates').value, 10) || 5;
+                    config.RequestTimeoutSeconds = parseInt(view.querySelector('#RequestTimeoutSeconds').value, 10) || 15;
+                    ApiClient.updatePluginConfiguration(SubtitleCatConfig.pluginUniqueId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+                e.preventDefault();
+                return false;
+            });
+    })();
+</script>
+</body>
+</html>
