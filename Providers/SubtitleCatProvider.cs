@@ -107,7 +107,7 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                         Format = "srt",
                         ThreeLetterISOLanguageName = threeLetter,
                         IsHashMatch = false,
-                        IsForced = false,
+                        Forced = false,
                     });
                 }
             }
