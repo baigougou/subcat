@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Jellyfin.Plugin.SubtitleCat</AssemblyName>
@@ -10,25 +10,10 @@
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
     <Version>1.0.0.0</Version>
     <LangVersion>latest</LangVersion>
-    <!--
-      A class library does not copy its NuGet dependencies into bin/ by
-      default, so HtmlAgilityPack.dll never lands next to the plugin DLL
-      and the packaging step fails. Jellyfin.Controller is unaffected
-      because it is referenced with IncludeAssets="compile" only.
-    -->
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
-    <!--
-      Jellyfin.Controller / Jellyfin.Model pull in MediaBrowser.Controller,
-      MediaBrowser.Common and MediaBrowser.Model. Pin this to the major.minor
-      of the Jellyfin server you are targeting. 10.11.*-* matches whatever
-      the latest published 10.11.x server prerelease/stable package is.
-      If you're building for 10.9 or 10.10 instead, change this string
-      accordingly (e.g. "10.9.*-*") and re-restore.
-    -->
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.*-*" IncludeAssets="compile" />
+    <PackageReference Include="Jellyfin.Controller" Version="10.10.*-*" IncludeAssets="compile" />
     <PackageReference Include="HtmlAgilityPack" Version="1.13.0" />
   </ItemGroup>
 
