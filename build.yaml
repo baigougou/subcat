@@ -1,6 +1,6 @@
 name: "SubtitleCat"
 guid: "f9a1f5c2-6b1e-4b7a-9b7a-1c9a2f7e2b31"
-version: "1.0.3.0"
+version: "1.0.4.0"
 targetAbi: "10.10.0.0"
 framework: "net8.0"
 owner: "baigougou"
@@ -11,6 +11,15 @@ artifacts:
   - "Jellyfin.Plugin.SubtitleCat.dll"
   - "HtmlAgilityPack.dll"
 changelog: |
+  ## v1.0.4.0
+  - Fix subtitle downloads. Detail-page links are root-absolute
+    (`/subs/766/x.zh-zh-CN.srt`); `Uri.TryCreate(..., Absolute)` reported those as
+    local `file:///subs/...` URIs on Unix, so every download failed with
+    "The 'file' scheme is not supported".
+  - Show the language on each search result (e.g. `ABW-276 [Chinese (Simplified)]`)
+    so Simplified / Traditional / other rows are no longer indistinguishable.
+  - Log which languages a detail page offers, and refuse non-http download urls
+    with a readable warning instead of an exception from inside HttpClient.
   ## v1.0.3.0
   - Fix: SubtitleCat search results emit relative hrefs (`subs/<id>/<name>.html`),
     but the XPath required a leading slash, so every search matched 0 nodes and

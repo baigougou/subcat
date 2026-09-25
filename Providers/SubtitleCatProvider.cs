@@ -120,11 +120,15 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
+                        var candidateCode = MediaCodeExtractor.Extract(candidate.Title);
+                        var isExactCodeMatch = !string.IsNullOrWhiteSpace(mediaCode)
+                            && string.Equals(candidateCode, mediaCode, StringComparison.OrdinalIgnoreCase);
+
                         _logger.LogDebug(
                             "SubtitleCat: candidate title=\"{Title}\", url={Url}, code={Code}",
                             candidate.Title,
                             candidate.DetailUrl,
-                            MediaCodeExtractor.Extract(candidate.Title) ?? "<none>");
+                            candidateCode ?? "<none>");
 
                         IReadOnlyList<LanguageEntry> languages;
                         try
@@ -136,6 +140,12 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                             _logger.LogWarning(ex, "SubtitleCat: failed to load detail page {Url}", candidate.DetailUrl);
                             continue;
                         }
+
+                        _logger.LogDebug(
+                            "SubtitleCat: detail {Url} offered {Count} language(s) with a downloadable subtitle: {Languages}",
+                            candidate.DetailUrl,
+                            languages.Count(l => l.HasSubtitle),
+                            string.Join(", ", languages.Where(l => l.HasSubtitle).Select(l => l.Code)));
 
                         foreach (var lang in languages)
                         {
@@ -158,10 +168,14 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                                 {
                                     Id = token,
                                     ProviderName = Name,
-                                    Name = candidate.Title,
+                                    // The bare page title carries no language information, and one
+                                    // title usually has several languages on offer - without the
+                                    // language the picker shows indistinguishable duplicates
+                                    // (e.g. two identical rows for zh-CN and zh-TW).
+                                    Name = $"{candidate.Title} [{lang.DisplayName}]",
                                     Format = "srt",
                                     ThreeLetterISOLanguageName = threeLetter,
-                                    IsHashMatch = isCodeQuery && MediaCodeExtractor.Extract(candidate.Title) != null,
+                                    IsHashMatch = isExactCodeMatch,
                                     Forced = false,
                                 });
                             }

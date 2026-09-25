@@ -25,7 +25,7 @@ lets GitHub build it for you for free:
    **SubtitleCat-plugin** artifact at the bottom of the page. It's a zip containing exactly what
    goes in your Jellyfin `plugins` folder: `Jellyfin.Plugin.SubtitleCat.dll`,
    `HtmlAgilityPack.dll`, and `meta.json`.
-5. Unzip it into a folder named `SubtitleCat_1.0.0.0` under your Jellyfin `plugins` directory (see
+5. Unzip it into a folder named `SubtitleCat_1.0.4.0` under your Jellyfin `plugins` directory (see
    the path table under "Install" below) and restart Jellyfin.
 
 If the build fails, open the failed step's log — it'll be one of the two things described in
@@ -97,7 +97,7 @@ For an authoritative, always-current reference for the exact interface shape, co
 ## Install
 
 1. Build (above), or download a pre-built zip if you made one via `jprm`.
-2. Create a folder named `SubtitleCat_1.0.0.0` inside your Jellyfin `plugins` directory:
+2. Create a folder named `SubtitleCat_1.0.4.0` inside your Jellyfin `plugins` directory:
 
    | Install type       | Path                                         |
    |---------------------|-----------------------------------------------|

@@ -34,16 +34,16 @@ jobs:
         run: |
           set -e
           rm -rf stage
-          mkdir -p stage/SubtitleCat_1.0.3.0
-          cp publish/Jellyfin.Plugin.SubtitleCat.dll stage/SubtitleCat_1.0.3.0/
-          cp publish/HtmlAgilityPack.dll stage/SubtitleCat_1.0.3.0/
-          cp meta.json stage/SubtitleCat_1.0.3.0/
+          mkdir -p stage/SubtitleCat_1.0.4.0
+          cp publish/Jellyfin.Plugin.SubtitleCat.dll stage/SubtitleCat_1.0.4.0/
+          cp publish/HtmlAgilityPack.dll stage/SubtitleCat_1.0.4.0/
+          cp meta.json stage/SubtitleCat_1.0.4.0/
           cd stage
-          zip -r ../SubtitleCat_1.0.3.0.zip SubtitleCat_1.0.3.0
+          zip -r ../SubtitleCat_1.0.4.0.zip SubtitleCat_1.0.4.0
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SubtitleCat-plugin-1.0.3.0
-          path: SubtitleCat_1.0.3.0.zip
+          name: SubtitleCat-plugin-1.0.4.0
+          path: SubtitleCat_1.0.4.0.zip
           if-no-files-found: error

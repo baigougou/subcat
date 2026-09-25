@@ -179,6 +179,19 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         /// </summary>
         public async Task<byte[]?> DownloadSubtitleAsync(string absoluteSrtUrl, CancellationToken cancellationToken)
         {
+            // Defence in depth: a non-http URL reaching this point means URL
+            // resolution went wrong upstream (see ResolveUrl). Bail out with a
+            // readable warning instead of letting HttpClient throw
+            // NotSupportedException from deep inside its handler stack.
+            if (!absoluteSrtUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                && !absoluteSrtUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "subtitlecat.com: refusing to download non-http subtitle url {Url}",
+                    absoluteSrtUrl);
+                return null;
+            }
+
             using var response = await SendAsync(absoluteSrtUrl, cancellationToken).ConfigureAwait(false);
             if (response is null || !response.IsSuccessStatusCode)
             {
@@ -208,12 +221,36 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
 
         private static string ResolveUrl(string href)
         {
+            // NOTE: an href from the *detail* page is root-absolute
+            // ("/subs/766/foo.zh-zh-CN.srt"). On Unix, Uri.TryCreate with
+            // UriKind.Absolute *succeeds* for such a path and reports it as a
+            // local file URI - "file:///subs/766/foo.zh-zh-CN.srt" - so trusting
+            // any "absolute" URI here silently rewrites a web path into a
+            // local one and the download dies with:
+            //   System.NotSupportedException: The 'file' scheme is not supported.
+            // Only a genuine http(s) URL may be returned as-is; everything else
+            // is joined onto the site root by hand.
             if (Uri.TryCreate(href, UriKind.Absolute, out var absolute))
             {
-                return absolute.ToString();
+                if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps)
+                {
+                    return absolute.ToString();
+                }
+
+                if (!href.StartsWith('/'))
+                {
+                    // e.g. "javascript:vote(...)" or "mailto:..." - nothing we can fetch.
+                    return href;
+                }
             }
 
-            return new Uri(new Uri(BaseUrl), href).ToString();
+            if (href.StartsWith("//", StringComparison.Ordinal))
+            {
+                // Protocol-relative: inherit the site's own scheme.
+                return "https:" + href;
+            }
+
+            return href.StartsWith('/') ? BaseUrl + href : BaseUrl + "/" + href;
         }
 
         private async Task<string?> GetStringAsync(string url, CancellationToken cancellationToken)
