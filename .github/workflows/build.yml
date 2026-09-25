@@ -27,13 +27,16 @@ jobs:
       - name: Build (Release)
         run: dotnet build Jellyfin.Plugin.SubtitleCat.csproj -c Release --no-restore
 
+      - name: Publish plugin files
+        run: dotnet publish Jellyfin.Plugin.SubtitleCat.csproj -c Release --no-restore -o publish
+
       - name: Stage plugin folder
         run: |
           set -e
           rm -rf stage
           mkdir -p stage/SubtitleCat_1.0.1.0
-          cp bin/Release/net8.0/Jellyfin.Plugin.SubtitleCat.dll stage/SubtitleCat_1.0.1.0/
-          cp bin/Release/net8.0/HtmlAgilityPack.dll stage/SubtitleCat_1.0.1.0/
+          cp publish/Jellyfin.Plugin.SubtitleCat.dll stage/SubtitleCat_1.0.1.0/
+          cp publish/HtmlAgilityPack.dll stage/SubtitleCat_1.0.1.0/
           cp meta.json stage/SubtitleCat_1.0.1.0/
           cd stage
           zip -r ../SubtitleCat_1.0.1.0.zip SubtitleCat_1.0.1.0
