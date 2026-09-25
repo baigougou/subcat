@@ -1,9 +1,9 @@
 name: "SubtitleCat"
 guid: "f9a1f5c2-6b1e-4b7a-9b7a-1c9a2f7e2b31"
-version: "1.0.0.0"
+version: "1.0.3.0"
 targetAbi: "10.10.0.0"
 framework: "net8.0"
-owner: "you"
+owner: "baigougou"
 overview: "Search and download subtitles from subtitlecat.com."
 description: "A Jellyfin subtitle provider for subtitlecat.com. No account or API key required."
 category: "Subtitles"
@@ -11,5 +11,11 @@ artifacts:
   - "Jellyfin.Plugin.SubtitleCat.dll"
   - "HtmlAgilityPack.dll"
 changelog: |
+  ## v1.0.3.0
+  - Fix: SubtitleCat search results emit relative hrefs (`subs/<id>/<name>.html`),
+    but the XPath required a leading slash, so every search matched 0 nodes and
+    silently returned no candidates.
+  - Add log warnings when no subtitle links are found, and when the search page
+    responds with a non-2xx status, so future markup changes are visible.
   ## v1.0.0.0
   - Initial release: search + download subtitles from subtitlecat.com for movies and episodes.

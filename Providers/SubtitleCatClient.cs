@@ -48,9 +48,19 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             doc.LoadHtml(html);
 
             var results = new List<TitleSearchResult>();
-            var links = doc.DocumentNode.SelectNodes("//a[contains(@href,'/subs/') and contains(@href,'.html')]");
+
+            // NOTE: the search-results page renders its rows with *relative*
+            // hrefs ("subs/1330/foo.html"), whereas the detail page uses
+            // root-absolute ones ("/subs/815/foo.srt"). Matching on "subs/"
+            // (no leading slash) covers both forms. Requiring "/subs/" matches
+            // nothing on the search page, which makes every search silently
+            // return zero candidates.
+            var links = doc.DocumentNode.SelectNodes("//a[contains(@href,'subs/') and contains(@href,'.html')]");
             if (links is null)
             {
+                _logger.LogWarning(
+                    "subtitlecat.com search page for {Url} contained no subtitle links - the site markup may have changed.",
+                    url);
                 return results;
             }
 
@@ -209,8 +219,19 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         private async Task<string?> GetStringAsync(string url, CancellationToken cancellationToken)
         {
             using var response = await SendAsync(url, cancellationToken).ConfigureAwait(false);
-            if (response is null || !response.IsSuccessStatusCode)
+            if (response is null)
             {
+                return null;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                // Without this the caller only sees "0 candidates" and has no
+                // way to tell a blocked/error response from an empty result set.
+                _logger.LogWarning(
+                    "subtitlecat.com returned HTTP {StatusCode} for {Url}",
+                    (int)response.StatusCode,
+                    url);
                 return null;
             }
 
