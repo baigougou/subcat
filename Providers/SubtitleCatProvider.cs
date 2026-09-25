@@ -59,88 +59,148 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                 request.ProductionYear,
                 request.Language);
 
-            var query = BuildQuery(request);
-            _logger.LogInformation("SubtitleCat: Search query = \"{Query}\"", query);
+            var queries = SearchQueryBuilder.Create(
+                request.Name,
+                request.MediaPath,
+                request.SeriesName,
+                request.ParentIndexNumber,
+                request.IndexNumber,
+                request.ProductionYear);
 
-            if (string.IsNullOrWhiteSpace(query))
+            var mediaCode = MediaCodeExtractor.Extract(request.MediaPath) ?? MediaCodeExtractor.Extract(request.Name);
+            _logger.LogInformation(
+                "SubtitleCat: extracted media code = {MediaCode}; query plan = {Queries}",
+                mediaCode ?? "<none>",
+                string.Join(" | ", queries));
+
+            if (queries.Count == 0)
             {
-                _logger.LogWarning("SubtitleCat: Search returned no query; Jellyfin did not provide a searchable title/episode.");
+                _logger.LogWarning("SubtitleCat: Search returned no query.");
                 return Array.Empty<RemoteSubtitleInfo>();
             }
 
             var client = CreateClient();
             var maxCandidates = Math.Max(1, Plugin.Instance?.Configuration.MaxCandidates ?? 5);
+            var results = new List<RemoteSubtitleInfo>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
-                var candidates = await client.SearchAsync(query, cancellationToken).ConfigureAwait(false);
-                _logger.LogInformation("SubtitleCat: SearchAsync returned {Count} candidates for \"{Query}\"", candidates.Count, query);
-
-                if (candidates.Count == 0)
-                {
-                    _logger.LogInformation("SubtitleCat: no search results for \"{Query}\"", query);
-                    return Array.Empty<RemoteSubtitleInfo>();
-                }
-
-                var ranked = RankByTitleSimilarity(candidates, query).Take(maxCandidates).ToList();
-
-                var results = new List<RemoteSubtitleInfo>();
-                foreach (var candidate in ranked)
+                for (var queryIndex = 0; queryIndex < queries.Count; queryIndex++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    var query = queries[queryIndex];
+                    var isCodeQuery = mediaCode != null && string.Equals(query, mediaCode, StringComparison.OrdinalIgnoreCase);
 
-                    _logger.LogDebug("SubtitleCat: loading languages from {Url}", candidate.DetailUrl);
+                    _logger.LogInformation(
+                        "SubtitleCat: Search query #{Index}/{Total} ({Type}) = \"{Query}\"",
+                        queryIndex + 1,
+                        queries.Count,
+                        isCodeQuery ? "MEDIA_CODE" : "TITLE",
+                        query);
 
-                    IReadOnlyList<LanguageEntry> languages;
-                try
-                {
-                    languages = await client.GetLanguagesAsync(candidate.DetailUrl, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-                {
-                    _logger.LogWarning(ex, "SubtitleCat: failed to load detail page {Url}", candidate.DetailUrl);
-                    continue;
-                }
+                    var candidates = await client.SearchAsync(query, cancellationToken).ConfigureAwait(false);
+                    _logger.LogInformation(
+                        "SubtitleCat: SearchAsync returned {Count} candidates for \"{Query}\"",
+                        candidates.Count,
+                        query);
 
-                    foreach (var lang in languages)
-                    {
-                        if (!lang.HasSubtitle)
-                    {
-                        continue;
-                    }
-
-                    if (!string.IsNullOrEmpty(request.Language) && !LanguageMap.Matches(lang.Code, request.Language))
+                    if (candidates.Count == 0)
                     {
                         continue;
                     }
 
-                    var threeLetter = LanguageMap.ToThreeLetter(lang.Code) ?? request.Language ?? lang.Code;
-                    var token = EncodeToken(lang.DownloadUrl!, threeLetter);
+                    var ranked = RankCandidates(candidates, query, mediaCode)
+                        .Take(maxCandidates)
+                        .ToList();
 
-                        results.Add(new RemoteSubtitleInfo
+                    var queryResultCountBefore = results.Count;
+
+                    foreach (var candidate in ranked)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        _logger.LogDebug(
+                            "SubtitleCat: candidate title=\"{Title}\", url={Url}, code={Code}",
+                            candidate.Title,
+                            candidate.DetailUrl,
+                            MediaCodeExtractor.Extract(candidate.Title) ?? "<none>");
+
+                        IReadOnlyList<LanguageEntry> languages;
+                        try
                         {
-                            Id = token,
-                            ProviderName = Name,
-                            Name = candidate.Title,
-                            Format = "srt",
-                            ThreeLetterISOLanguageName = threeLetter,
-                            IsHashMatch = false,
-                            Forced = false,
-                        });
+                            languages = await client.GetLanguagesAsync(candidate.DetailUrl, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+                        {
+                            _logger.LogWarning(ex, "SubtitleCat: failed to load detail page {Url}", candidate.DetailUrl);
+                            continue;
+                        }
+
+                        foreach (var lang in languages)
+                        {
+                            if (!lang.HasSubtitle)
+                            {
+                                continue;
+                            }
+
+                            if (!string.IsNullOrEmpty(request.Language) && !LanguageMap.Matches(lang.Code, request.Language))
+                            {
+                                continue;
+                            }
+
+                            var threeLetter = LanguageMap.ToThreeLetter(lang.Code) ?? request.Language ?? lang.Code;
+                            var token = EncodeToken(lang.DownloadUrl!, threeLetter);
+
+                            if (seen.Add(token))
+                            {
+                                results.Add(new RemoteSubtitleInfo
+                                {
+                                    Id = token,
+                                    ProviderName = Name,
+                                    Name = candidate.Title,
+                                    Format = "srt",
+                                    ThreeLetterISOLanguageName = threeLetter,
+                                    IsHashMatch = isCodeQuery && MediaCodeExtractor.Extract(candidate.Title) != null,
+                                    Forced = false,
+                                });
+                            }
+                        }
+                    }
+
+                    var added = results.Count - queryResultCountBefore;
+                    _logger.LogInformation(
+                        "SubtitleCat: query #{Index} added {Added} subtitle result(s); total={TotalResults}",
+                        queryIndex + 1,
+                        added,
+                        results.Count);
+
+                    // A successful exact media-code match is enough to stop.
+                    // If the code search found candidates but none had the
+                    // requested language, continue with the title fallback.
+                    if (isCodeQuery && ranked.Any(c =>
+                            string.Equals(
+                                MediaCodeExtractor.Extract(c.Title),
+                                mediaCode,
+                                StringComparison.OrdinalIgnoreCase))
+                        && added > 0)
+                    {
+                        _logger.LogInformation("SubtitleCat: exact media-code match found; skipping title fallback.");
+                        break;
                     }
                 }
 
-                _logger.LogInformation("SubtitleCat: Search completed. Returning {Count} subtitle candidates for \"{Query}\"", results.Count, query);
+                _logger.LogInformation("SubtitleCat: Search completed. Returning {Count} subtitle candidates.", results.Count);
                 return results;
             }
             catch (OperationCanceledException)
             {
-                _logger.LogDebug("SubtitleCat: Search cancelled for \"{Query}\"", query);
+                _logger.LogDebug("SubtitleCat: Search cancelled.");
                 throw;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "SubtitleCat: Search failed for \"{Query}\"", query);
+                _logger.LogError(ex, "SubtitleCat: Search failed.");
                 throw;
             }
         }
@@ -179,28 +239,6 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             return new SubtitleCatClient(httpClient, _logger);
         }
 
-        private static string BuildQuery(SubtitleSearchRequest request)
-        {
-            if (!string.IsNullOrWhiteSpace(request.SeriesName) && request.ParentIndexNumber.HasValue && request.IndexNumber.HasValue)
-            {
-                return string.Format(
-                    CultureInfo.InvariantCulture,
-                    "{0} S{1:D2}E{2:D2}",
-                    request.SeriesName,
-                    request.ParentIndexNumber.Value,
-                    request.IndexNumber.Value);
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.Name))
-            {
-                return request.ProductionYear.HasValue
-                    ? $"{request.Name} {request.ProductionYear.Value}"
-                    : request.Name!;
-            }
-
-            return string.Empty;
-        }
-
         /// <summary>
         /// Cheap relevance ranking: normalize both strings (lowercase, strip
         /// punctuation/whitespace) and sort candidates by how much of the
@@ -209,14 +247,26 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         /// already does the heavy lifting; this just avoids opening
         /// obviously-unrelated rows first when the result list is long.
         /// </summary>
-        private static IEnumerable<TitleSearchResult> RankByTitleSimilarity(IReadOnlyList<TitleSearchResult> candidates, string query)
+        private static IEnumerable<TitleSearchResult> RankCandidates(
+            IReadOnlyList<TitleSearchResult> candidates,
+            string query,
+            string? mediaCode)
         {
-            var normalizedQuery = Normalize(query);
-
             return candidates
-                .Select(c => (Result: c, Score: SimilarityScore(Normalize(c.Title), normalizedQuery)))
-                .OrderByDescending(t => t.Score)
-                .Select(t => t.Result);
+                .Select(c =>
+                {
+                    var candidateCode = MediaCodeExtractor.Extract(c.Title);
+                    var codeMatch = !string.IsNullOrWhiteSpace(mediaCode)
+                        && string.Equals(candidateCode, mediaCode, StringComparison.OrdinalIgnoreCase);
+
+                    var score = codeMatch
+                        ? 10000
+                        : SimilarityScore(Normalize(c.Title), Normalize(query));
+
+                    return (Result: c, Score: score);
+                })
+                .OrderByDescending(x => x.Score)
+                .Select(x => x.Result);
         }
 
         private static int SimilarityScore(string title, string query)
