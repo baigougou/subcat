@@ -50,30 +50,48 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         /// <inheritdoc />
         public async Task<IEnumerable<RemoteSubtitleInfo>> Search(SubtitleSearchRequest request, CancellationToken cancellationToken)
         {
+            _logger.LogInformation(
+                "SubtitleCat: Search called. Name={Name}, SeriesName={SeriesName}, Season={Season}, Episode={Episode}, Year={Year}, Language={Language}",
+                request.Name,
+                request.SeriesName,
+                request.ParentIndexNumber,
+                request.IndexNumber,
+                request.ProductionYear,
+                request.Language);
+
             var query = BuildQuery(request);
+            _logger.LogInformation("SubtitleCat: Search query = \"{Query}\"", query);
+
             if (string.IsNullOrWhiteSpace(query))
             {
+                _logger.LogWarning("SubtitleCat: Search returned no query; Jellyfin did not provide a searchable title/episode.");
                 return Array.Empty<RemoteSubtitleInfo>();
             }
 
             var client = CreateClient();
             var maxCandidates = Math.Max(1, Plugin.Instance?.Configuration.MaxCandidates ?? 5);
 
-            var candidates = await client.SearchAsync(query, cancellationToken).ConfigureAwait(false);
-            if (candidates.Count == 0)
+            try
             {
-                _logger.LogDebug("SubtitleCat: no search results for \"{Query}\"", query);
-                return Array.Empty<RemoteSubtitleInfo>();
-            }
+                var candidates = await client.SearchAsync(query, cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation("SubtitleCat: SearchAsync returned {Count} candidates for \"{Query}\"", candidates.Count, query);
 
-            var ranked = RankByTitleSimilarity(candidates, query).Take(maxCandidates).ToList();
+                if (candidates.Count == 0)
+                {
+                    _logger.LogInformation("SubtitleCat: no search results for \"{Query}\"", query);
+                    return Array.Empty<RemoteSubtitleInfo>();
+                }
 
-            var results = new List<RemoteSubtitleInfo>();
-            foreach (var candidate in ranked)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
+                var ranked = RankByTitleSimilarity(candidates, query).Take(maxCandidates).ToList();
 
-                IReadOnlyList<LanguageEntry> languages;
+                var results = new List<RemoteSubtitleInfo>();
+                foreach (var candidate in ranked)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    _logger.LogDebug("SubtitleCat: loading languages from {Url}", candidate.DetailUrl);
+
+                    IReadOnlyList<LanguageEntry> languages;
                 try
                 {
                     languages = await client.GetLanguagesAsync(candidate.DetailUrl, cancellationToken).ConfigureAwait(false);
@@ -84,9 +102,9 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                     continue;
                 }
 
-                foreach (var lang in languages)
-                {
-                    if (!lang.HasSubtitle)
+                    foreach (var lang in languages)
+                    {
+                        if (!lang.HasSubtitle)
                     {
                         continue;
                     }
@@ -99,20 +117,32 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                     var threeLetter = LanguageMap.ToThreeLetter(lang.Code) ?? request.Language ?? lang.Code;
                     var token = EncodeToken(lang.DownloadUrl!, threeLetter);
 
-                    results.Add(new RemoteSubtitleInfo
-                    {
-                        Id = token,
-                        ProviderName = Name,
-                        Name = candidate.Title,
-                        Format = "srt",
-                        ThreeLetterISOLanguageName = threeLetter,
-                        IsHashMatch = false,
-                        Forced = false,
-                    });
+                        results.Add(new RemoteSubtitleInfo
+                        {
+                            Id = token,
+                            ProviderName = Name,
+                            Name = candidate.Title,
+                            Format = "srt",
+                            ThreeLetterISOLanguageName = threeLetter,
+                            IsHashMatch = false,
+                            Forced = false,
+                        });
+                    }
                 }
-            }
 
-            return results;
+                _logger.LogInformation("SubtitleCat: Search completed. Returning {Count} subtitle candidates for \"{Query}\"", results.Count, query);
+                return results;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("SubtitleCat: Search cancelled for \"{Query}\"", query);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SubtitleCat: Search failed for \"{Query}\"", query);
+                throw;
+            }
         }
 
         /// <inheritdoc />
