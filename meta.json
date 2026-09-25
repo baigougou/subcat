@@ -4,12 +4,14 @@
   "name": "SubtitleCat",
   "description": "Search and download subtitles from subtitlecat.com.",
   "overview": "Search and download subtitles from subtitlecat.com. No account or API key required.",
-  "owner": "you",
-  "version": "1.0.0.0",
+  "owner": "baigougou",
+  "repositoryUrl": "https://github.com/baigougou/subcat",
+  "repositoryName": "baigougou/subcat",
+  "version": "1.0.1.0",
   "targetAbi": "10.10.0.0",
   "framework": "net8.0",
   "status": "Active",
   "autoUpdate": false,
   "imageUrl": "",
-  "changelog": "Initial release."
+  "changelog": "1.0.1.0 - Fix package metadata and add provider diagnostics logging."
 }
