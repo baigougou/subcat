@@ -148,7 +148,11 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         /// <inheritdoc />
         public async Task<SubtitleResponse> GetSubtitles(string id, CancellationToken cancellationToken)
         {
+            _logger.LogInformation("SubtitleCat: GetSubtitles called.");
+
             var token = DecodeToken(id);
+            _logger.LogInformation("SubtitleCat: downloading subtitle. Language={Language}, Url={Url}", token.Language, token.Url);
+
             var client = CreateClient();
 
             var bytes = await client.DownloadSubtitleAsync(token.Url, cancellationToken).ConfigureAwait(false);
@@ -156,6 +160,8 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             {
                 throw new InvalidOperationException($"SubtitleCat: could not download subtitle from {token.Url}");
             }
+
+            _logger.LogInformation("SubtitleCat: subtitle download completed. Bytes={Bytes}", bytes.Length);
 
             return new SubtitleResponse
             {
