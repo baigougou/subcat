@@ -13,5 +13,5 @@
   "status": "Active",
   "autoUpdate": false,
   "imageUrl": "",
-  "changelog": "1.0.6.0 - Rank and filter subtitlecat results by the site's own quality signals (user rating, download count, file size) and require a distinctive title match, so unrelated same-year films are no longer downloaded; offer one result per language to stop .0/.1/.2 duplicate subtitle files."
+  "changelog": "1.0.6.0 - Prefer subtitles written in the requested language over machine translations. Each result row is labelled with the language it was translated from; a row sourced from the requested language is the original, anything else was machine-translated into it. Fixes the case where the most-downloaded row was also the most machine-translated one and therefore won the ranking."
 }
