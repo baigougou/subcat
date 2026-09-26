@@ -123,7 +123,7 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                         continue;
                     }
 
-                    var ranked = RankCandidates(candidates, query, mediaCode, request.ProductionYear, config)
+                    var ranked = RankCandidates(candidates, query, mediaCode, request.ProductionYear, request.Language, config)
                         .Take(maxCandidates)
                         .ToList();
 
@@ -327,7 +327,7 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         }
 
         /// <summary>
-        /// Scores and filters the search-result rows. Two independent things
+        /// Scores and filters the search-result rows. Three independent things
         /// matter here:
         ///
         /// * Relevance - is the row actually the title we asked for?
@@ -336,11 +336,19 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         ///   A row that shares no distinctive word with the query is dropped
         ///   outright while RequireTitleTokenMatch is on; the rows that
         ///   survive are the ones the site genuinely recognised.
+        /// * Original vs translation - is the row's subtitle the language the
+        ///   caller asked for, or a machine translation *into* it? The site
+        ///   labels every row with the language it was translated from, and
+        ///   that label is the single most reliable signal on the page: a
+        ///   translated row is the one that arrives full of &lt;b&gt; markup
+        ///   and half-translated sentences. This is scored per row rather than
+        ///   filtered, so a title with no original in the requested language
+        ///   still falls back to the best translation instead of nothing.
         /// * Quality - among rows that *are* the right title, the one the site
         ///   happens to list first is not the best one. The site's own signals
         ///   (user rating, download count, file size) break that tie.
         ///
-        /// The previous version did neither: it scored on a single
+        /// The previous version did none of this: it scored on a single
         /// substring test and handed the caller the site's row order.
         /// </summary>
         private static IReadOnlyList<TitleSearchResult> RankCandidates(
@@ -348,6 +356,7 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             string query,
             string? mediaCode,
             int? year,
+            string? requestedLanguage,
             PluginConfiguration config)
         {
             var normalizedQuery = Normalize(query);
@@ -392,6 +401,25 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                 if (candidate.IsRatedGood)
                 {
                     score += 400;
+                }
+
+                // Original vs machine translation. Only scored when the row
+                // actually carries a source-language label and the caller said
+                // which language it wants - an unlabelled row must not be
+                // punished for missing information.
+                if (config.PreferRequestedLanguageAsSource
+                    && !string.IsNullOrWhiteSpace(requestedLanguage)
+                    && !string.IsNullOrWhiteSpace(candidate.SourceLanguage))
+                {
+                    // Deliberately larger than the whole rest of the tail
+                    // (rating + tokens + phrase + size + downloads add up to
+                    // roughly 1400) so a translated row can never outrank an
+                    // original by being more popular, and deliberately smaller
+                    // than a media-code match (+10000) so this can never
+                    // promote a row that is a different title altogether.
+                    score += LanguageMap.EnglishNameMatches(candidate.SourceLanguage, requestedLanguage)
+                        ? 3000
+                        : -1500;
                 }
 
                 if (candidate.Downloads is int downloads)

@@ -39,6 +39,21 @@ namespace Jellyfin.Plugin.SubtitleCat.Configuration
         public bool ExcludeBadlyRated { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets a value indicating whether a result whose *source*
+        /// language is the language being requested is preferred over one that
+        /// was machine-translated into it.
+        ///
+        /// subtitlecat labels every search row with the language it was
+        /// translated from. A row sourced from the requested language is the
+        /// human-made original; a row sourced from any other language has been
+        /// run through a translator, which is what leaves the &lt;b&gt; markup
+        /// and half-translated lines behind. Rows with no label are unaffected,
+        /// and a title that has no original in the requested language still
+        /// falls back to its best translation.
+        /// </summary>
+        public bool PreferRequestedLanguageAsSource { get; set; } = true;
+
+        /// <summary>
         /// Gets or sets a value indicating whether a result row must share at
         /// least one distinctive word with the query in order to be considered.
         /// This is what keeps the site's fallback matches - e.g. a

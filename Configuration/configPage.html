@@ -52,6 +52,15 @@
                         Requires a result to share a word with the title you searched for. Turn this off to see subtitlecat's raw results, including its year-only fallbacks.
                     </div>
                 </div>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="PreferRequestedLanguageAsSource" />
+                        <span>Prefer subtitles written in the requested language</span>
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">
+                        subtitlecat labels each result with the language it was translated from. A result sourced from the language you asked for is the original; the others are machine translations, which is where the stray &lt;b&gt; tags and half-translated lines come from. Playback still falls back to a translation when no original exists.
+                    </div>
+                </div>
                 <div>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                         <span>Save</span>
@@ -75,6 +84,7 @@
                 view.querySelector('#MaxPerLanguage').value = config.MaxPerLanguage;
                 view.querySelector('#ExcludeBadlyRated').checked = config.ExcludeBadlyRated;
                 view.querySelector('#RequireTitleTokenMatch').checked = config.RequireTitleTokenMatch;
+                view.querySelector('#PreferRequestedLanguageAsSource').checked = config.PreferRequestedLanguageAsSource;
                 Dashboard.hideLoadingMsg();
             });
         }
@@ -94,6 +104,7 @@
                     config.MaxPerLanguage = parseInt(view.querySelector('#MaxPerLanguage').value, 10) || 1;
                     config.ExcludeBadlyRated = view.querySelector('#ExcludeBadlyRated').checked;
                     config.RequireTitleTokenMatch = view.querySelector('#RequireTitleTokenMatch').checked;
+                    config.PreferRequestedLanguageAsSource = view.querySelector('#PreferRequestedLanguageAsSource').checked;
                     ApiClient.updatePluginConfiguration(SubtitleCatConfig.pluginUniqueId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
                     });

@@ -36,6 +36,15 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             @"([\d.]+)\s*(TB|GB|MB|KB|B)?",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        /// <summary>
+        /// Matches the source-language label subtitlecat prints after a row's
+        /// title, e.g. "(translated from Chinese)". Note that this text sits
+        /// in the surrounding &lt;td&gt;, *outside* the &lt;a&gt; element.
+        /// </summary>
+        private static readonly Regex SourceLanguagePattern = new(
+            @"\(\s*translated\s+from\s+(?<lang>[^)]+?)\s*\)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         private readonly HttpClient _httpClient;
         private readonly ILogger _logger;
 
@@ -51,10 +60,11 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         ///
         /// Each row also carries the site's own quality signals - a
         /// thumbs-up/down user rating, a download counter, the subtitle file
-        /// size and how many languages the title offers. They live in the
-        /// same &lt;tr&gt; as the link, so reading them costs no extra request;
-        /// they're what lets the provider rank "the same film in three
-        /// uploads" instead of trusting the site's row order.
+        /// size, how many languages the title offers, and the language the row
+        /// was translated *from*. They live in the same &lt;tr&gt; as the link,
+        /// so reading them costs no extra request; they're what lets the
+        /// provider rank "the same film in three uploads" instead of trusting
+        /// the site's row order.
         /// </summary>
         public async Task<IReadOnlyList<TitleSearchResult>> SearchAsync(string query, CancellationToken cancellationToken)
         {
@@ -113,7 +123,8 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                     ParseRating(link),
                     downloads,
                     sizeBytes,
-                    languageCount));
+                    languageCount,
+                    ParseSourceLanguage(link)));
             }
 
             return results;
@@ -123,7 +134,7 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         /// Reads the part of a row the picker cares about. The search page
         /// is a plain table:
         ///   &lt;tr&gt;
-        ///     &lt;td&gt;&lt;a href="subs/949/x.html"&gt;Title&lt;/a&gt;&lt;/td&gt;
+        ///     &lt;td&gt;&lt;a href="subs/949/x.html"&gt;Title&lt;/a&gt; (translated from Chinese)&lt;/td&gt;
         ///     &lt;td class="sub-table__stars"&gt;&amp;nbsp;|&lt;span title="Rated good by users"&gt;..&lt;/span&gt;&lt;/td&gt;
         ///     &lt;td class="sub-table__metric"&gt;...Size...&lt;/td&gt;
         ///     &lt;td class="sub-table__metric"&gt;...Downloads...&lt;/td&gt;
@@ -173,6 +184,38 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             }
 
             return (downloads, sizeBytes, languageCount);
+        }
+
+        /// <summary>
+        /// Reads the language a row was translated from, e.g.
+        ///   &lt;td&gt;&lt;a href="subs/1029/x.html"&gt;x&lt;/a&gt; (translated from Chinese)&lt;/td&gt;
+        ///
+        /// The label is a bare text node *outside* the anchor, so it is
+        /// invisible to link.InnerText - which is exactly why the original
+        /// ranking could not tell a Chinese original from an English subtitle
+        /// that had been machine-translated into Chinese. Reading the
+        /// enclosing cell instead makes the distinction available for free.
+        ///
+        /// Returns null when the row carries no such label; callers must treat
+        /// null as "unknown", not as "different language".
+        /// </summary>
+        private static string? ParseSourceLanguage(HtmlNode link)
+        {
+            // The <td> that holds the anchor; the label is a sibling text node.
+            var cell = link.ParentNode;
+            if (cell is null)
+            {
+                return null;
+            }
+
+            var text = HtmlEntity.DeEntitize(cell.InnerText);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return null;
+            }
+
+            var match = SourceLanguagePattern.Match(text);
+            return match.Success ? match.Groups["lang"].Value.Trim() : null;
         }
 
         /// <summary>

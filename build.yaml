@@ -1,6 +1,6 @@
 name: "SubtitleCat"
 guid: "f9a1f5c2-6b1e-4b7a-9b7a-1c9a2f7e2b31"
-version: "1.0.5.0"
+version: "1.0.6.0"
 targetAbi: "10.10.0.0"
 framework: "net8.0"
 owner: "baigougou"
@@ -11,6 +11,17 @@ artifacts:
   - "Jellyfin.Plugin.SubtitleCat.dll"
   - "HtmlAgilityPack.dll"
 changelog: |
+  ## v1.0.6.0
+  - Prefer subtitles written in the requested language over machine translations.
+    Each result row carries the language it was translated from; a row sourced
+    from the requested language is the original, anything else was translated
+    into it. Fixes the case where the most-downloaded row was also the most
+    machine-translated one and therefore won the ranking.
+  - Read that source language from the result row without any extra request, and
+    resolve language names to ISO 639-2 so they can be compared with what
+    Jellyfin asked for.
+  - New "Prefer subtitles written in the requested language" setting (on by
+    default). Turn it off to rank every row that offers the language equally.
   ## v1.0.5.0
   - Use subtitlecat's own quality signals: rank results by user rating, download
     count and file size instead of trusting the order the site returned them in.

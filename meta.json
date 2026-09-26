@@ -7,11 +7,11 @@
   "owner": "baigougou",
   "repositoryUrl": "https://github.com/baigougou/subcat",
   "repositoryName": "baigougou/subcat",
-  "version": "1.0.5.0",
+  "version": "1.0.6.0",
   "targetAbi": "10.10.0.0",
   "framework": "net8.0",
   "status": "Active",
   "autoUpdate": false,
   "imageUrl": "",
-  "changelog": "1.0.5.0 - Rank and filter subtitlecat results by the site's own quality signals (user rating, download count, file size) and require a distinctive title match, so unrelated same-year films are no longer downloaded; offer one result per language to stop .0/.1/.2 duplicate subtitle files."
+  "changelog": "1.0.6.0 - Rank and filter subtitlecat results by the site's own quality signals (user rating, download count, file size) and require a distinctive title match, so unrelated same-year films are no longer downloaded; offer one result per language to stop .0/.1/.2 duplicate subtitle files."
 }

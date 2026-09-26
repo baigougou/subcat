@@ -8,11 +8,11 @@ login, or API key needed — it scrapes the same search and download pages a bro
 > 1.0.3.0 and 1.0.4.0 were installed into a live Jellyfin 10.10 server and used for real
 > searches and downloads.
 >
-> 1.0.5.0 changes **which** result gets downloaded, not how the download happens. That selection
-> logic was verified by replaying the real search pages captured from subtitlecat.com through the
-> same rules implemented in Python (this project's build environment has no .NET SDK). Treat the
-> ranking numbers below as tuned-but-unproven on your library, and read "Known risk areas" for
-> the two problems this release deliberately does **not** fix.
+> 1.0.5.0 and 1.0.6.0 change **which** result gets downloaded, not how the download happens.
+> That selection logic was verified by replaying real search pages captured from subtitlecat.com
+> through the same rules re-implemented in Python. Treat the ranking numbers below as
+> tuned-but-unproven on your library, and read "Known risk areas" for the two problems these
+> releases deliberately do **not** fix.
 
 ## What it does
 
@@ -22,11 +22,11 @@ login, or API key needed — it scrapes the same search and download pages a bro
   then opens the top few matching result pages and returns the subtitles available in the
   language Jellyfin asked for.
 - Reads each row's own quality signals — the site's user rating (thumbs up / thumbs down), the
-  download counter, the file size and the language count — from the same `<tr>` as the link, so
-  gathering them costs no extra requests.
+  download counter, the file size, the language count, and the language the row was *translated
+  from* — from the same `<tr>` as the link, so gathering them costs no extra requests.
 - Downloads the matched `.srt` file when you pick a result from Jellyfin's "Edit subtitles" UI.
 
-## How a result is chosen (1.0.5.0)
+## How a result is chosen (1.0.6.0)
 
 subtitlecat's own search is a loose bag-of-words match, and it is happy to answer a query it did
 not really understand. Searching for a Chinese-titled anime plus its year, for example, returns
@@ -38,18 +38,27 @@ builds took the first row the site returned; this is what changed:
    unrelated films. If subtitlecat returns rows that match nothing but the year, the query is
    discarded and logged — nothing is downloaded, instead of the wrong thing.
 2. **Drop rows rated bad by the site's users** (5.7% of rows are rated *good*, 0.7% *bad*).
-3. **Rank: relevance first, then quality.** An exact media-code match (e.g. `ABF-043` in both the
+3. **Prefer the original over a machine translation.** Every row is labelled with the language it
+   was translated from: `<a href="subs/1029/abp-984-4k.html">abp-984-4k</a> (translated from
+   Chinese)`. A row whose source language *is* the language being requested is the human-made
+   original; every other row was run through a translator. That difference is large and visible —
+   measured on one title, the Chinese-sourced rows carried **zero** `<b>` tags and no foreign
+   script residue, while rows sourced from English carried ~1,800 `<b>` tags and Korean Hangul
+   left over from the pivot language. Source language matching the request scores +3000, anything
+   else −1500. Rows with no label are not penalised, so a title with no original in the requested
+   language still falls back to its best translation.
+4. **Rank: relevance first, then quality.** An exact media-code match (e.g. `ABF-043` in both the
    query and the title) dominates. Otherwise: number of distinctive words matched, whole-query
    containment, then user rating, then download count on a log scale, then file size — sub-8 KB
    files are treated as placeholders, and a *different* year in the title is penalised.
-4. **One result per language by default** (`MaxPerLanguage`). Jellyfin never overwrites a
+5. **One result per language by default** (`MaxPerLanguage`). Jellyfin never overwrites a
    subtitle file: it writes `<video>.<lang>.srt` and falls back to `<video>.<lang>.0.srt`,
    `.1.srt`, … when that name is taken. Offering several rows that all resolve to `zho` is what
    litters a media folder with numbered duplicates.
-5. **Stop early.** Once the requested language is served, remaining candidate pages and fallback
+6. **Stop early.** Once the requested language is served, remaining candidate pages and fallback
    queries are skipped. Without this, a missing-subtitles scan opens up to `MaxCandidates` detail
    pages per item even after it already has the answer.
-6. **Show the signals.** Each picker row carries what you would otherwise have to open
+7. **Show the signals.** Each picker row carries what you would otherwise have to open
    subtitlecat.com to compare, e.g.
    `Inception.2010.1080p.BrRip.x264.YIFY [Chinese (Simplified)] · rated good · 2223 downloads · 132 KB`
 
@@ -82,14 +91,16 @@ Plugin.cs                            - plugin entry point (BasePlugin<PluginConf
 PluginServiceRegistrator.cs          - registers SubtitleCatProvider as an ISubtitleProvider
 Configuration/
   PluginConfiguration.cs             - MaxCandidates, RequestTimeoutSeconds, MaxPerLanguage,
-                                       ExcludeBadlyRated, RequireTitleTokenMatch
+                                       ExcludeBadlyRated, RequireTitleTokenMatch,
+                                       PreferRequestedLanguageAsSource
   configPage.html                    - minimal settings page (no credentials needed)
 Providers/
   SubtitleCatProvider.cs             - ISubtitleProvider implementation (the Jellyfin-facing part)
   SubtitleCatClient.cs               - HTTP + HTML parsing against subtitlecat.com (no Jellyfin deps)
   SubtitleCatModels.cs               - small internal DTOs used between the two files above
 Util/
-  LanguageMap.cs                     - subtitlecat language code <-> ISO 639-2 mapping
+  LanguageMap.cs                     - subtitlecat language code <-> ISO 639-2 mapping, and
+                                       English language name ("Chinese") -> ISO 639-2
 build.yaml                           - plugin manifest metadata (name, GUID, version, targetAbi, changelog)
 meta.json                            - copied into the install folder so Jellyfin can read plugin metadata
 ```
@@ -170,6 +181,10 @@ configuration is kept, and newly added settings get their documented defaults.
 - **Require a distinctive title word** (default on) — require each row to share a non-year word
   with the query. Turning this off restores subtitlecat's raw, unfiltered result list (and with
   it the old behaviour of sometimes downloading an unrelated film of the same year).
+- **Prefer subtitles written in the requested language** (default on) — rank a row whose *source*
+  language is the language being requested (i.e. the human-made original) above rows that were
+  machine-translated into it. Turn it off to go back to treating every row that offers the
+  language as equally good.
 
 ## Known risk areas / limitations
 
@@ -177,7 +192,8 @@ configuration is kept, and newly added settings get their documented defaults.
   metadata is Chinese (or any non-English) and no original title is available to the plugin,
   searches for e.g. `红猪 1992` or `罗生门 1950` simply return nothing useful — the provider has no
   title-translation step, and Jellyfin's `SubtitleSearchRequest` does not carry an English name.
-  1.0.5.0's guarantee is that this case yields **zero** results rather than a wrong film. For
+  The relevance gate's guarantee is that this case yields **zero** results rather than a wrong
+  film. For
   Chinese-language subtitles specifically, prefer a Chinese-focused source (MoviePilot's subtitle
   module, SubHD, shooter.cn) and keep this provider for English-titled content.
 - **Jellyfin's numbering is not a plugin bug.** `<video>.<lang>.0.srt`, `.1.srt`, … appear when
@@ -198,6 +214,14 @@ configuration is kept, and newly added settings get their documented defaults.
   to the ISO 639-2 code `zho`, which is why a Chinese download lands on the same file name. A
   handful of rarer languages may map to an approximate or missing code — the subtitle is still
   downloadable, it just may not show up when Jellyfin filters strictly by language.
+- **The original-vs-translation rule is evidence from a small sample.** Rule 3 above is the
+  strongest quality signal available, but its weighting was tuned on a handful of titles, and the
+  `(translated from X)` label is only useful when subtitlecat printed one — a row without the
+  label is treated as "unknown" and neither gains nor loses points. If you find a title where it
+  picks a worse row, set `PreferRequestedLanguageAsSource` to off in the plugin settings; that
+  removes the term entirely without touching anything else. A useful sanity check is that a
+  genuine original in Chinese will usually carry no `<b>` tags at all, while a machine-translated
+  one typically carries hundreds.
 - **Overlap with other providers is not de-duplicated.** If you also run OpenSubtitles/SubBuzz/
   Bazarr, the same subtitle may be offered twice from different sources — that's normal and
   harmless.
@@ -215,6 +239,11 @@ configuration is kept, and newly added settings get their documented defaults.
 Kept in `build.yaml` (`changelog:`) — that is also what Jellyfin reads when the plugin is served
 from a repository:
 
+- **1.0.6.0** — prefer originals over machine translations: each row's source language (the
+  `(translated from Chinese)` label, which sits outside the link element and was previously
+  unread) is compared with the requested language, and a row sourced from the requested language
+  is ranked above one that was translated into it. Fixes the case where the highest-downloaded
+  row was also the most machine-translated one.
 - **1.0.5.0** — rank and filter results by subtitlecat's own quality signals (rating, downloads,
   size) instead of row order; require a distinctive title word so same-year unrelated films are
   no longer downloaded; drop badly-rated rows; one result per language; stop scanning once the

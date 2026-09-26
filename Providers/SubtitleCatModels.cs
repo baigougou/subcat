@@ -32,7 +32,8 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             UserRating rating = UserRating.None,
             int? downloads = null,
             long? sizeBytes = null,
-            int? languageCount = null)
+            int? languageCount = null,
+            string? sourceLanguage = null)
         {
             DetailUrl = detailUrl;
             Title = title;
@@ -40,6 +41,7 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             Downloads = downloads;
             SizeBytes = sizeBytes;
             LanguageCount = languageCount;
+            SourceLanguage = sourceLanguage;
         }
 
         public string DetailUrl { get; }
@@ -57,6 +59,21 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
 
         /// <summary>Gets how many languages this title offers, or null when unparseable.</summary>
         public int? LanguageCount { get; }
+
+        /// <summary>
+        /// Gets the language this row was <em>translated from</em>, as
+        /// subtitlecat prints it - the "Chinese" of a row labelled
+        /// "(translated from Chinese)" - or null when the row carries no such
+        /// label.
+        ///
+        /// This is the strongest quality signal on the page and the one that
+        /// used to be thrown away, because the label sits *next to* the
+        /// &lt;a&gt; element rather than inside it and so never appeared in
+        /// the anchor's InnerText. A row whose source language is the language
+        /// being requested is the human-made original; every other row was run
+        /// through a translator and carries the artifacts that come with it.
+        /// </summary>
+        public string? SourceLanguage { get; }
 
         public bool IsRatedGood => Rating == UserRating.Good;
 
