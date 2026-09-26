@@ -1,6 +1,6 @@
 name: "SubtitleCat"
 guid: "f9a1f5c2-6b1e-4b7a-9b7a-1c9a2f7e2b31"
-version: "1.0.4.0"
+version: "1.0.5.0"
 targetAbi: "10.10.0.0"
 framework: "net8.0"
 owner: "baigougou"
@@ -11,6 +11,18 @@ artifacts:
   - "Jellyfin.Plugin.SubtitleCat.dll"
   - "HtmlAgilityPack.dll"
 changelog: |
+  ## v1.0.5.0
+  - Use subtitlecat's own quality signals: rank results by user rating, download
+    count and file size instead of trusting the order the site returned them in.
+  - Require a result to share a distinctive word with the searched title. The
+    site's year-only fallback used to hand Jellyfin an unrelated film of the same
+    year as the subtitle track.
+  - Drop results rated bad by users.
+  - Offer at most one result per language, so Jellyfin stops producing
+    `<video>.<lang>.0.srt` / `.1.srt` / `.2.srt` duplicates next to the video.
+  - Stop inspecting candidates and fallback queries once the requested language
+    has been served (the missing-subtitles task was taking hours per library).
+  - Show rating, download count and size on each picker row.
   ## v1.0.4.0
   - Fix subtitle downloads. Detail-page links are root-absolute
     (`/subs/766/x.zh-zh-CN.srt`); `Uri.TryCreate(..., Absolute)` reported those as

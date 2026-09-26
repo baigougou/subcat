@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
@@ -22,6 +24,18 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
     {
         private const string BaseUrl = "https://www.subtitlecat.com";
 
+        /// <summary>
+        /// The first integer in a metric cell. The cell's text is e.g.
+        /// "13 downloads" / "13 languages" because the unit is a nested
+        /// &lt;span&gt; whose InnerText is concatenated by HtmlAgilityPack.
+        /// </summary>
+        private static readonly Regex MetricNumber = new(@"(\d+)", RegexOptions.Compiled);
+
+        /// <summary>Matches the "65 KB" / "1.2 MB" form of the Size cell.</summary>
+        private static readonly Regex SizePattern = new(
+            @"([\d.]+)\s*(TB|GB|MB|KB|B)?",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         private readonly HttpClient _httpClient;
         private readonly ILogger _logger;
 
@@ -34,6 +48,13 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         /// <summary>
         /// Runs a title search and returns the candidate rows, in the order
         /// subtitlecat returned them (which is roughly relevance/recency).
+        ///
+        /// Each row also carries the site's own quality signals - a
+        /// thumbs-up/down user rating, a download counter, the subtitle file
+        /// size and how many languages the title offers. They live in the
+        /// same &lt;tr&gt; as the link, so reading them costs no extra request;
+        /// they're what lets the provider rank "the same film in three
+        /// uploads" instead of trusting the site's row order.
         /// </summary>
         public async Task<IReadOnlyList<TitleSearchResult>> SearchAsync(string query, CancellationToken cancellationToken)
         {
@@ -84,10 +105,129 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                     continue; // dedupe (the same row can appear more than once in the table markup)
                 }
 
-                results.Add(new TitleSearchResult(absolute, title));
+                var (downloads, sizeBytes, languageCount) = ParseRowMetrics(link);
+
+                results.Add(new TitleSearchResult(
+                    absolute,
+                    title,
+                    ParseRating(link),
+                    downloads,
+                    sizeBytes,
+                    languageCount));
             }
 
             return results;
+        }
+
+        /// <summary>
+        /// Reads the part of a row the picker cares about. The search page
+        /// is a plain table:
+        ///   &lt;tr&gt;
+        ///     &lt;td&gt;&lt;a href="subs/949/x.html"&gt;Title&lt;/a&gt;&lt;/td&gt;
+        ///     &lt;td class="sub-table__stars"&gt;&amp;nbsp;|&lt;span title="Rated good by users"&gt;..&lt;/span&gt;&lt;/td&gt;
+        ///     &lt;td class="sub-table__metric"&gt;...Size...&lt;/td&gt;
+        ///     &lt;td class="sub-table__metric"&gt;...Downloads...&lt;/td&gt;
+        ///     &lt;td class="sub-table__metric"&gt;...Languages...&lt;/td&gt;
+        ///   &lt;/tr&gt;
+        /// Absolutely nothing here is required for a row to be usable - a
+        /// markup change must degrade ranking, not break searching, hence
+        /// the null defaults.
+        /// </summary>
+        private static (int? Downloads, long? SizeBytes, int? LanguageCount) ParseRowMetrics(HtmlNode link)
+        {
+            int? downloads = null;
+            long? sizeBytes = null;
+            int? languageCount = null;
+
+            var row = link.Ancestors("tr").FirstOrDefault();
+            if (row is null)
+            {
+                return (downloads, sizeBytes, languageCount);
+            }
+
+            var metrics = row.SelectNodes(".//td[contains(@class,'sub-table__metric')]");
+            if (metrics is null)
+            {
+                return (downloads, sizeBytes, languageCount);
+            }
+
+            foreach (var metric in metrics)
+            {
+                var label = metric.SelectSingleNode(".//span[contains(@class,'sub-table__metric-label')]")?.InnerText
+                            ?? string.Empty;
+                var value = metric.SelectSingleNode(".//span[contains(@class,'sub-table__metric-value')]")?.InnerText
+                            ?? string.Empty;
+
+                if (label.Contains("Size", StringComparison.OrdinalIgnoreCase))
+                {
+                    sizeBytes = ParseSize(value);
+                }
+                else if (label.Contains("Download", StringComparison.OrdinalIgnoreCase))
+                {
+                    downloads = ParseLeadingInt(value);
+                }
+                else if (label.Contains("Language", StringComparison.OrdinalIgnoreCase))
+                {
+                    languageCount = ParseLeadingInt(value);
+                }
+            }
+
+            return (downloads, sizeBytes, languageCount);
+        }
+
+        /// <summary>
+        /// Matches the rating badge on the "Rated good by users" title
+        /// attribute rather than the glyph, so swapping the emoji (or the
+        /// underlying icon) doesn't silently turn every rated row into an
+        /// unrated one.
+        /// </summary>
+        private static UserRating ParseRating(HtmlNode link)
+        {
+            var row = link.Ancestors("tr").FirstOrDefault();
+            var badge = row?.SelectSingleNode(".//td[contains(@class,'sub-table__stars')]//*[@title]");
+            var tooltip = badge?.GetAttributeValue("title", string.Empty) ?? string.Empty;
+
+            if (tooltip.Contains("good", StringComparison.OrdinalIgnoreCase))
+            {
+                return UserRating.Good;
+            }
+
+            if (tooltip.Contains("bad", StringComparison.OrdinalIgnoreCase))
+            {
+                return UserRating.Bad;
+            }
+
+            return UserRating.None;
+        }
+
+        private static int? ParseLeadingInt(string value)
+        {
+            var match = MetricNumber.Match(value);
+            return match.Success
+                   && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : null;
+        }
+
+        private static long? ParseSize(string value)
+        {
+            var match = SizePattern.Match(value);
+            if (!match.Success
+                || !double.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var amount))
+            {
+                return null;
+            }
+
+            var multiplier = match.Groups[2].Value.ToUpperInvariant() switch
+            {
+                "TB" => 1024L * 1024 * 1024 * 1024,
+                "GB" => 1024L * 1024 * 1024,
+                "MB" => 1024L * 1024,
+                "KB" => 1024L,
+                _ => 1L,
+            };
+
+            return (long)(amount * multiplier);
         }
 
         /// <summary>
