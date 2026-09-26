@@ -2,7 +2,11 @@ name: Build plugin
 
 on:
   push:
+    branches:
+      - main
+      - "fix/**"
   workflow_dispatch:
+  pull_request:
 
 jobs:
   build:
@@ -12,10 +16,10 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Set up .NET 9 SDK
+      - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '8.0.x'
 
       - name: Restore
         run: dotnet restore Jellyfin.Plugin.SubtitleCat.csproj
@@ -23,16 +27,23 @@ jobs:
       - name: Build (Release)
         run: dotnet build Jellyfin.Plugin.SubtitleCat.csproj -c Release --no-restore
 
+      - name: Publish plugin files
+        run: dotnet publish Jellyfin.Plugin.SubtitleCat.csproj -c Release --no-restore -o publish
+
       - name: Stage plugin folder
         run: |
-          mkdir -p stage/SubtitleCat_1.0.0.0
-          cp bin/Release/net9.0/Jellyfin.Plugin.SubtitleCat.dll stage/SubtitleCat_1.0.0.0/
-          cp bin/Release/net9.0/HtmlAgilityPack.dll stage/SubtitleCat_1.0.0.0/
-          cp meta.json stage/SubtitleCat_1.0.0.0/
+          set -e
+          rm -rf stage
+          mkdir -p stage/SubtitleCat_1.0.6.0
+          cp publish/Jellyfin.Plugin.SubtitleCat.dll stage/SubtitleCat_1.0.6.0/
+          cp publish/HtmlAgilityPack.dll stage/SubtitleCat_1.0.6.0/
+          cp meta.json stage/SubtitleCat_1.0.6.0/
+          cd stage
+          zip -r ../SubtitleCat_1.0.6.0.zip SubtitleCat_1.0.6.0
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SubtitleCat-plugin
-          path: stage/SubtitleCat_1.0.0.0/
+          name: SubtitleCat-plugin-1.0.6.0
+          path: SubtitleCat_1.0.6.0.zip
           if-no-files-found: error

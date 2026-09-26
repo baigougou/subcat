@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
@@ -22,6 +24,27 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
     {
         private const string BaseUrl = "https://www.subtitlecat.com";
 
+        /// <summary>
+        /// The first integer in a metric cell. The cell's text is e.g.
+        /// "13 downloads" / "13 languages" because the unit is a nested
+        /// &lt;span&gt; whose InnerText is concatenated by HtmlAgilityPack.
+        /// </summary>
+        private static readonly Regex MetricNumber = new(@"(\d+)", RegexOptions.Compiled);
+
+        /// <summary>Matches the "65 KB" / "1.2 MB" form of the Size cell.</summary>
+        private static readonly Regex SizePattern = new(
+            @"([\d.]+)\s*(TB|GB|MB|KB|B)?",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// Matches the source-language label subtitlecat prints after a row's
+        /// title, e.g. "(translated from Chinese)". Note that this text sits
+        /// in the surrounding &lt;td&gt;, *outside* the &lt;a&gt; element.
+        /// </summary>
+        private static readonly Regex SourceLanguagePattern = new(
+            @"\(\s*translated\s+from\s+(?<lang>[^)]+?)\s*\)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         private readonly HttpClient _httpClient;
         private readonly ILogger _logger;
 
@@ -34,6 +57,14 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         /// <summary>
         /// Runs a title search and returns the candidate rows, in the order
         /// subtitlecat returned them (which is roughly relevance/recency).
+        ///
+        /// Each row also carries the site's own quality signals - a
+        /// thumbs-up/down user rating, a download counter, the subtitle file
+        /// size, how many languages the title offers, and the language the row
+        /// was translated *from*. They live in the same &lt;tr&gt; as the link,
+        /// so reading them costs no extra request; they're what lets the
+        /// provider rank "the same film in three uploads" instead of trusting
+        /// the site's row order.
         /// </summary>
         public async Task<IReadOnlyList<TitleSearchResult>> SearchAsync(string query, CancellationToken cancellationToken)
         {
@@ -48,9 +79,19 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
             doc.LoadHtml(html);
 
             var results = new List<TitleSearchResult>();
-            var links = doc.DocumentNode.SelectNodes("//a[contains(@href,'/subs/') and contains(@href,'.html')]");
+
+            // NOTE: the search-results page renders its rows with *relative*
+            // hrefs ("subs/1330/foo.html"), whereas the detail page uses
+            // root-absolute ones ("/subs/815/foo.srt"). Matching on "subs/"
+            // (no leading slash) covers both forms. Requiring "/subs/" matches
+            // nothing on the search page, which makes every search silently
+            // return zero candidates.
+            var links = doc.DocumentNode.SelectNodes("//a[contains(@href,'subs/') and contains(@href,'.html')]");
             if (links is null)
             {
+                _logger.LogWarning(
+                    "subtitlecat.com search page for {Url} contained no subtitle links - the site markup may have changed.",
+                    url);
                 return results;
             }
 
@@ -74,10 +115,162 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
                     continue; // dedupe (the same row can appear more than once in the table markup)
                 }
 
-                results.Add(new TitleSearchResult(absolute, title));
+                var (downloads, sizeBytes, languageCount) = ParseRowMetrics(link);
+
+                results.Add(new TitleSearchResult(
+                    absolute,
+                    title,
+                    ParseRating(link),
+                    downloads,
+                    sizeBytes,
+                    languageCount,
+                    ParseSourceLanguage(link)));
             }
 
             return results;
+        }
+
+        /// <summary>
+        /// Reads the part of a row the picker cares about. The search page
+        /// is a plain table:
+        ///   &lt;tr&gt;
+        ///     &lt;td&gt;&lt;a href="subs/949/x.html"&gt;Title&lt;/a&gt; (translated from Chinese)&lt;/td&gt;
+        ///     &lt;td class="sub-table__stars"&gt;&amp;nbsp;|&lt;span title="Rated good by users"&gt;..&lt;/span&gt;&lt;/td&gt;
+        ///     &lt;td class="sub-table__metric"&gt;...Size...&lt;/td&gt;
+        ///     &lt;td class="sub-table__metric"&gt;...Downloads...&lt;/td&gt;
+        ///     &lt;td class="sub-table__metric"&gt;...Languages...&lt;/td&gt;
+        ///   &lt;/tr&gt;
+        /// Absolutely nothing here is required for a row to be usable - a
+        /// markup change must degrade ranking, not break searching, hence
+        /// the null defaults.
+        /// </summary>
+        private static (int? Downloads, long? SizeBytes, int? LanguageCount) ParseRowMetrics(HtmlNode link)
+        {
+            int? downloads = null;
+            long? sizeBytes = null;
+            int? languageCount = null;
+
+            var row = link.Ancestors("tr").FirstOrDefault();
+            if (row is null)
+            {
+                return (downloads, sizeBytes, languageCount);
+            }
+
+            var metrics = row.SelectNodes(".//td[contains(@class,'sub-table__metric')]");
+            if (metrics is null)
+            {
+                return (downloads, sizeBytes, languageCount);
+            }
+
+            foreach (var metric in metrics)
+            {
+                var label = metric.SelectSingleNode(".//span[contains(@class,'sub-table__metric-label')]")?.InnerText
+                            ?? string.Empty;
+                var value = metric.SelectSingleNode(".//span[contains(@class,'sub-table__metric-value')]")?.InnerText
+                            ?? string.Empty;
+
+                if (label.Contains("Size", StringComparison.OrdinalIgnoreCase))
+                {
+                    sizeBytes = ParseSize(value);
+                }
+                else if (label.Contains("Download", StringComparison.OrdinalIgnoreCase))
+                {
+                    downloads = ParseLeadingInt(value);
+                }
+                else if (label.Contains("Language", StringComparison.OrdinalIgnoreCase))
+                {
+                    languageCount = ParseLeadingInt(value);
+                }
+            }
+
+            return (downloads, sizeBytes, languageCount);
+        }
+
+        /// <summary>
+        /// Reads the language a row was translated from, e.g.
+        ///   &lt;td&gt;&lt;a href="subs/1029/x.html"&gt;x&lt;/a&gt; (translated from Chinese)&lt;/td&gt;
+        ///
+        /// The label is a bare text node *outside* the anchor, so it is
+        /// invisible to link.InnerText - which is exactly why the original
+        /// ranking could not tell a Chinese original from an English subtitle
+        /// that had been machine-translated into Chinese. Reading the
+        /// enclosing cell instead makes the distinction available for free.
+        ///
+        /// Returns null when the row carries no such label; callers must treat
+        /// null as "unknown", not as "different language".
+        /// </summary>
+        private static string? ParseSourceLanguage(HtmlNode link)
+        {
+            // The <td> that holds the anchor; the label is a sibling text node.
+            var cell = link.ParentNode;
+            if (cell is null)
+            {
+                return null;
+            }
+
+            var text = HtmlEntity.DeEntitize(cell.InnerText);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return null;
+            }
+
+            var match = SourceLanguagePattern.Match(text);
+            return match.Success ? match.Groups["lang"].Value.Trim() : null;
+        }
+
+        /// <summary>
+        /// Matches the rating badge on the "Rated good by users" title
+        /// attribute rather than the glyph, so swapping the emoji (or the
+        /// underlying icon) doesn't silently turn every rated row into an
+        /// unrated one.
+        /// </summary>
+        private static UserRating ParseRating(HtmlNode link)
+        {
+            var row = link.Ancestors("tr").FirstOrDefault();
+            var badge = row?.SelectSingleNode(".//td[contains(@class,'sub-table__stars')]//*[@title]");
+            var tooltip = badge?.GetAttributeValue("title", string.Empty) ?? string.Empty;
+
+            if (tooltip.Contains("good", StringComparison.OrdinalIgnoreCase))
+            {
+                return UserRating.Good;
+            }
+
+            if (tooltip.Contains("bad", StringComparison.OrdinalIgnoreCase))
+            {
+                return UserRating.Bad;
+            }
+
+            return UserRating.None;
+        }
+
+        private static int? ParseLeadingInt(string value)
+        {
+            var match = MetricNumber.Match(value);
+            return match.Success
+                   && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : null;
+        }
+
+        private static long? ParseSize(string value)
+        {
+            var match = SizePattern.Match(value);
+            if (!match.Success
+                || !double.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var amount))
+            {
+                return null;
+            }
+
+            var multiplier = match.Groups[2].Value.ToUpperInvariant() switch
+            {
+                "TB" => 1024L * 1024 * 1024 * 1024,
+                "GB" => 1024L * 1024 * 1024,
+                "MB" => 1024L * 1024,
+                "KB" => 1024L,
+                _ => 1L,
+            };
+
+            return (long)(amount * multiplier);
         }
 
         /// <summary>
@@ -169,6 +362,19 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
         /// </summary>
         public async Task<byte[]?> DownloadSubtitleAsync(string absoluteSrtUrl, CancellationToken cancellationToken)
         {
+            // Defence in depth: a non-http URL reaching this point means URL
+            // resolution went wrong upstream (see ResolveUrl). Bail out with a
+            // readable warning instead of letting HttpClient throw
+            // NotSupportedException from deep inside its handler stack.
+            if (!absoluteSrtUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                && !absoluteSrtUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "subtitlecat.com: refusing to download non-http subtitle url {Url}",
+                    absoluteSrtUrl);
+                return null;
+            }
+
             using var response = await SendAsync(absoluteSrtUrl, cancellationToken).ConfigureAwait(false);
             if (response is null || !response.IsSuccessStatusCode)
             {
@@ -198,19 +404,54 @@ namespace Jellyfin.Plugin.SubtitleCat.Providers
 
         private static string ResolveUrl(string href)
         {
+            // NOTE: an href from the *detail* page is root-absolute
+            // ("/subs/766/foo.zh-zh-CN.srt"). On Unix, Uri.TryCreate with
+            // UriKind.Absolute *succeeds* for such a path and reports it as a
+            // local file URI - "file:///subs/766/foo.zh-zh-CN.srt" - so trusting
+            // any "absolute" URI here silently rewrites a web path into a
+            // local one and the download dies with:
+            //   System.NotSupportedException: The 'file' scheme is not supported.
+            // Only a genuine http(s) URL may be returned as-is; everything else
+            // is joined onto the site root by hand.
             if (Uri.TryCreate(href, UriKind.Absolute, out var absolute))
             {
-                return absolute.ToString();
+                if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps)
+                {
+                    return absolute.ToString();
+                }
+
+                if (!href.StartsWith('/'))
+                {
+                    // e.g. "javascript:vote(...)" or "mailto:..." - nothing we can fetch.
+                    return href;
+                }
             }
 
-            return new Uri(new Uri(BaseUrl), href).ToString();
+            if (href.StartsWith("//", StringComparison.Ordinal))
+            {
+                // Protocol-relative: inherit the site's own scheme.
+                return "https:" + href;
+            }
+
+            return href.StartsWith('/') ? BaseUrl + href : BaseUrl + "/" + href;
         }
 
         private async Task<string?> GetStringAsync(string url, CancellationToken cancellationToken)
         {
             using var response = await SendAsync(url, cancellationToken).ConfigureAwait(false);
-            if (response is null || !response.IsSuccessStatusCode)
+            if (response is null)
             {
+                return null;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                // Without this the caller only sees "0 candidates" and has no
+                // way to tell a blocked/error response from an empty result set.
+                _logger.LogWarning(
+                    "subtitlecat.com returned HTTP {StatusCode} for {Url}",
+                    (int)response.StatusCode,
+                    url);
                 return null;
             }
 

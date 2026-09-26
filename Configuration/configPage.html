@@ -27,6 +27,40 @@
                     <label class="inputLabel inputLabelUnfocused" for="RequestTimeoutSeconds">Request timeout (seconds)</label>
                     <input is="emby-input" type="number" id="RequestTimeoutSeconds" min="5" max="60" label="Request timeout (seconds)" />
                 </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="MaxPerLanguage">Max results per language</label>
+                    <input is="emby-input" type="number" id="MaxPerLanguage" min="1" max="10" label="Max results per language" />
+                    <div class="fieldDescription">
+                        How many subtitle rows to offer for the same language. Keep this at 1: Jellyfin appends .0/.1/.2 rather than overwriting, so several rows for one language become several files next to the video.
+                    </div>
+                </div>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="ExcludeBadlyRated" />
+                        <span>Drop results rated bad by users</span>
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">
+                        Skips rows that subtitlecat.com is showing a "Rated bad by users" badge for.
+                    </div>
+                </div>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="RequireTitleTokenMatch" />
+                        <span>Require the result to match the title</span>
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">
+                        Requires a result to share a word with the title you searched for. Turn this off to see subtitlecat's raw results, including its year-only fallbacks.
+                    </div>
+                </div>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="PreferRequestedLanguageAsSource" />
+                        <span>Prefer subtitles written in the requested language</span>
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">
+                        subtitlecat labels each result with the language it was translated from. A result sourced from the language you asked for is the original; the others are machine translations, which is where the stray &lt;b&gt; tags and half-translated lines come from. Playback still falls back to a translation when no original exists.
+                    </div>
+                </div>
                 <div>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                         <span>Save</span>
@@ -47,6 +81,10 @@
             ApiClient.getPluginConfiguration(SubtitleCatConfig.pluginUniqueId).then(function (config) {
                 view.querySelector('#MaxCandidates').value = config.MaxCandidates;
                 view.querySelector('#RequestTimeoutSeconds').value = config.RequestTimeoutSeconds;
+                view.querySelector('#MaxPerLanguage').value = config.MaxPerLanguage;
+                view.querySelector('#ExcludeBadlyRated').checked = config.ExcludeBadlyRated;
+                view.querySelector('#RequireTitleTokenMatch').checked = config.RequireTitleTokenMatch;
+                view.querySelector('#PreferRequestedLanguageAsSource').checked = config.PreferRequestedLanguageAsSource;
                 Dashboard.hideLoadingMsg();
             });
         }
@@ -63,6 +101,10 @@
                 ApiClient.getPluginConfiguration(SubtitleCatConfig.pluginUniqueId).then(function (config) {
                     config.MaxCandidates = parseInt(view.querySelector('#MaxCandidates').value, 10) || 5;
                     config.RequestTimeoutSeconds = parseInt(view.querySelector('#RequestTimeoutSeconds').value, 10) || 15;
+                    config.MaxPerLanguage = parseInt(view.querySelector('#MaxPerLanguage').value, 10) || 1;
+                    config.ExcludeBadlyRated = view.querySelector('#ExcludeBadlyRated').checked;
+                    config.RequireTitleTokenMatch = view.querySelector('#RequireTitleTokenMatch').checked;
+                    config.PreferRequestedLanguageAsSource = view.querySelector('#PreferRequestedLanguageAsSource').checked;
                     ApiClient.updatePluginConfiguration(SubtitleCatConfig.pluginUniqueId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
                     });
